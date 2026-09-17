@@ -1,0 +1,30 @@
+# Polymarket Trading Desk overlay on top of the shipped `web` profile.
+#
+# Boot with:
+#   dsh --profile web \
+#     --patch apps/cli/config/examples/schedule/cordis.yml \
+#     --patch packages/prediction-markets/tool-polymarket/cordis.patch.yml
+#
+# The schedule overlay is a separate shipped example (see its own file) —
+# referenced here in comments rather than duplicated, so it stays in sync
+# with whatever `dsh-schedule`/`ui-schedule` actually need. It is what makes
+# `schedule_create` (used by the polymarket-research persona for recurring
+# checks) visible and its reminders show in the header catalog.
+#
+# Both rows below are additive inserts: an unclaimed id, so nothing here
+# overrides a shipped row.
+
+- insert:
+    # Host-plane Polymarket tools (search_market, market_probability_gauge,
+    # market_price_chart, market_order_ticket, market_resolution_criteria,
+    # market_position_summary) plus the polymarket-research preset install.
+    - id: tool-polymarket
+      name: '@deepseek-ai/dsh-tool-polymarket'
+      config:
+        enabled: true
+
+    # Browser widgets for the five market_* tool results, keyed onto the
+    # tool.call.toolview slot, plus their GenericToolCard fallback for
+    # search_market.
+    - id: ui-polymarket
+      name: '@deepseek-ai/dsh-client-ui-polymarket'
