@@ -15,6 +15,8 @@
 
 const GAMMA_BASE_URL = 'https://gamma-api.polymarket.com'
 const CLOB_BASE_URL = 'https://clob.polymarket.com'
+/** Public, unauthenticated index of on-chain activity: trades, positions, wallet activity. */
+const DATA_BASE_URL = 'https://data-api.polymarket.com'
 
 /** One Gamma market row, as returned by `/markets` and `/markets/:id`. */
 export interface RawGammaMarket {
@@ -24,6 +26,7 @@ export interface RawGammaMarket {
   description?: string
   active: boolean
   closed: boolean
+  conditionId: string
   /** JSON-encoded string array, e.g. `'["Yes","No"]'` — Gamma's known quirk. */
   outcomes: string
   /** JSON-encoded string array of prices aligned to `outcomes`, e.g. `'["0.63","0.37"]'`. */
@@ -36,6 +39,8 @@ export interface RawGammaMarket {
   startDate?: string
   resolutionSource?: string
   updatedAt?: string
+  /** Present on `/markets` (list) responses; absent on `/markets/:id` (single). */
+  events?: { id: string; slug: string; title?: string }[]
 }
 
 export interface PolymarketOutcome {
@@ -46,6 +51,7 @@ export interface PolymarketOutcome {
 
 export interface PolymarketMarket {
   marketId: string
+  conditionId: string
   question: string
   slug: string
   active: boolean
@@ -80,6 +86,7 @@ function toMarket(raw: RawGammaMarket): PolymarketMarket {
   }))
   return {
     marketId: raw.id,
+    conditionId: raw.conditionId,
     question: raw.question,
     slug: raw.slug,
     active: raw.active,
@@ -140,6 +147,41 @@ export async function getMarket(marketId: string, signal: AbortSignal): Promise<
   return toMarket(raw)
 }
 
+export interface PolymarketEventRef {
+  eventId: string
+  slug: string
+  title: string
+}
+
+/**
+ * Finds the event a market belongs to, if any. Only the list form of `/markets`
+ * (`?id=`) embeds `events`; the single-resource form (`/markets/:id`, used by
+ * `getMarket`) does not, so this issues its own request rather than reusing it.
+ */
+export async function getMarketEvent(marketId: string, signal: AbortSignal): Promise<PolymarketEventRef | null> {
+  const url = new URL('/markets', GAMMA_BASE_URL)
+  url.searchParams.set('id', marketId)
+  const raw = await getJson<RawGammaMarket[]>(url.toString(), signal)
+  const event = raw[0]?.events?.[0]
+  if (!event) return null
+  return { eventId: event.id, slug: event.slug, title: event.title ?? '' }
+}
+
+interface RawGammaEvent {
+  id: string
+  slug: string
+  title: string
+  markets?: RawGammaMarket[]
+}
+
+/** Fetches every sibling market grouped under one event (e.g. every FOMC-meeting date under one umbrella). */
+export async function getEventMarkets(eventId: string, signal: AbortSignal): Promise<PolymarketMarket[]> {
+  const url = new URL('/events', GAMMA_BASE_URL)
+  url.searchParams.set('id', eventId)
+  const raw = await getJson<RawGammaEvent[]>(url.toString(), signal)
+  return (raw[0]?.markets ?? []).map(toMarket)
+}
+
 export interface OrderBookLevel {
   price: number
   size: number
@@ -160,10 +202,13 @@ export async function getOrderBook(clobTokenId: string, signal: AbortSignal): Pr
   const url = new URL('/book', CLOB_BASE_URL)
   url.searchParams.set('token_id', clobTokenId)
   const raw = await getJson<RawClobBook>(url.toString(), signal)
-  return {
-    bids: raw.bids.map(l => ({ price: Number(l.price), size: Number(l.size) })),
-    asks: raw.asks.map(l => ({ price: Number(l.price), size: Number(l.size) })),
-  }
+  // The CLOB API returns bids ascending and asks descending (both worst-price-first),
+  // not best-price-first — sort so callers can safely read index 0 as the best price.
+  const bids = raw.bids.map(l => ({ price: Number(l.price), size: Number(l.size) }))
+    .sort((a, b) => b.price - a.price)
+  const asks = raw.asks.map(l => ({ price: Number(l.price), size: Number(l.size) }))
+    .sort((a, b) => a.price - b.price)
+  return { bids, asks }
 }
 
 export interface PricePoint {
@@ -199,4 +244,149 @@ export function pickOutcome(market: PolymarketMarket, outcome?: string): Polymar
   const picked = found ?? market.outcomes[0]
   if (!picked) throw new Error(`polymarket: market ${market.marketId} has no outcomes`)
   return picked
+}
+
+export interface MarketTrade {
+  side: 'BUY' | 'SELL'
+  outcome: string
+  price: number
+  size: number
+  timestamp: string
+}
+
+interface RawDataTrade {
+  side: 'BUY' | 'SELL'
+  outcome: string
+  price: number
+  size: number
+  timestamp: number
+}
+
+/** Fetches recently *executed* trades for a market (real fills), not resting order-book quotes. */
+export async function getMarketTrades(
+  conditionId: string, limit: number, signal: AbortSignal,
+): Promise<MarketTrade[]> {
+  const url = new URL('/trades', DATA_BASE_URL)
+  url.searchParams.set('market', conditionId)
+  url.searchParams.set('limit', String(limit))
+  const raw = await getJson<RawDataTrade[]>(url.toString(), signal)
+  return raw.map(t => ({
+    side: t.side,
+    outcome: t.outcome,
+    price: Number(t.price),
+    size: Number(t.size),
+    timestamp: new Date(t.timestamp * 1000).toISOString(),
+  }))
+}
+
+export interface WalletPosition {
+  title: string
+  outcome: string
+  size: number
+  avgPrice: number
+  currentPrice: number
+  currentValue: number
+  cashPnl: number
+  percentPnl: number
+  redeemable: boolean
+}
+
+interface RawWalletPosition {
+  title: string
+  outcome: string
+  size: number
+  avgPrice: number
+  curPrice: number
+  currentValue: number
+  cashPnl: number
+  percentPnl: number
+  redeemable: boolean
+}
+
+/** Fetches a public wallet address's real, currently-held Polymarket positions. */
+export async function getWalletPositions(
+  address: string, limit: number, signal: AbortSignal,
+): Promise<WalletPosition[]> {
+  const url = new URL('/positions', DATA_BASE_URL)
+  url.searchParams.set('user', address)
+  url.searchParams.set('limit', String(limit))
+  const raw = await getJson<RawWalletPosition[]>(url.toString(), signal)
+  return raw.map(p => ({
+    title: p.title,
+    outcome: p.outcome,
+    size: Number(p.size),
+    avgPrice: Number(p.avgPrice),
+    currentPrice: Number(p.curPrice),
+    currentValue: Number(p.currentValue),
+    cashPnl: Number(p.cashPnl),
+    percentPnl: Number(p.percentPnl),
+    redeemable: p.redeemable,
+  }))
+}
+
+export interface WalletActivityRow {
+  type: string
+  title: string
+  outcome: string
+  side: string | null
+  price: number | null
+  size: number | null
+  timestamp: string
+}
+
+interface RawWalletActivity {
+  type: string
+  title: string
+  outcome: string
+  side?: string
+  price?: number
+  size?: number
+  timestamp: number
+}
+
+/** Fetches a public wallet address's real recent activity (trades, redemptions, etc). */
+export async function getWalletActivity(
+  address: string, limit: number, signal: AbortSignal,
+): Promise<WalletActivityRow[]> {
+  const url = new URL('/activity', DATA_BASE_URL)
+  url.searchParams.set('user', address)
+  url.searchParams.set('limit', String(limit))
+  const raw = await getJson<RawWalletActivity[]>(url.toString(), signal)
+  return raw.map(a => ({
+    type: a.type,
+    title: a.title,
+    outcome: a.outcome,
+    side: a.side ?? null,
+    price: a.price === undefined ? null : Number(a.price),
+    size: a.size === undefined ? null : Number(a.size),
+    timestamp: new Date(a.timestamp * 1000).toISOString(),
+  }))
+}
+
+export interface MarketComment {
+  author: string
+  body: string
+  createdAt: string
+}
+
+interface RawComment {
+  body: string
+  createdAt: string
+  profile?: { name?: string; pseudonym?: string }
+}
+
+/** Fetches public discussion comments on an event (Polymarket threads comments per-event, not per-sub-market). */
+export async function getEventComments(
+  eventId: string, limit: number, signal: AbortSignal,
+): Promise<MarketComment[]> {
+  const url = new URL('/comments', GAMMA_BASE_URL)
+  url.searchParams.set('parent_entity_type', 'Event')
+  url.searchParams.set('parent_entity_id', eventId)
+  url.searchParams.set('limit', String(limit))
+  const raw = await getJson<RawComment[]>(url.toString(), signal)
+  return raw.map(c => ({
+    author: c.profile?.name || c.profile?.pseudonym || 'anonymous',
+    body: c.body,
+    createdAt: c.createdAt,
+  }))
 }

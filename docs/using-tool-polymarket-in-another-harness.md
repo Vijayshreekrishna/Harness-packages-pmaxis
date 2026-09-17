@@ -6,6 +6,25 @@ what isn't, and how to wire it into another agent framework, an MCP server,
 or a plain script — using `resolver-plugin` (also in this repo) as a worked
 second example of the same pattern.
 
+## Is this reachable via MCP while it's inside deepseek-harness? No.
+
+`tool-polymarket`'s tools register on the harness's own internal tool
+registry (cordis `ctx.tools`) — that registry is not exposed outward.
+`deepseek-harness` ships an MCP **client** (`packages/mcp/mcp-client`,
+"connects to MCP servers and registers their tools on `ctx.tools`") and an
+ACP layer that mounts external MCP servers into the harness the same way,
+but there is no MCP **server** package anywhere in the repo that would take
+the harness's own tools (this one included) and expose them outward to an
+external MCP client such as Claude Desktop or another agent. Being inside
+`deepseek-harness` does not make a tool MCP-reachable by itself.
+
+To actually make `tool-polymarket` reachable over MCP, don't try to expose
+the harness — stand up a small separate MCP server (using
+`@modelcontextprotocol/sdk`) that imports the portable `core/*.ts` functions
+directly. That's exactly the pattern in the next section: `core/*.ts` has no
+framework dependency, so it's just as usable from a purpose-built MCP server
+as it is from `deepseek-harness`'s own `tools/*.ts` adapter.
+
 ## What's portable vs. framework-specific
 
 ```
@@ -102,6 +121,10 @@ harness-specific adapter.
 - `getOrderBook()` sorts bids descending / asks ascending internally — do
   not re-read the raw CLOB `/book` response yourself and assume index `[0]`
   is the best price; the upstream API does not guarantee that.
-- `market_order_ticket` and `market_position_summary` are mock previews.
-  Whatever harness you port this to, keep surfacing that explicitly — this
-  package never signs, submits, or sizes a real order.
+- Every tool in this package returns only real data fetched live from
+  Polymarket — none of them mock, preview, or invent a trade, a position, or
+  a price. `market_quote` is a real order-book read, not a trade you're
+  placing; `wallet_summary` only ever reports what a real, caller-supplied
+  wallet address actually holds and did, never a hypothetical scenario. Keep
+  that property whatever harness you port this to — it's a design
+  constraint, not an accident.

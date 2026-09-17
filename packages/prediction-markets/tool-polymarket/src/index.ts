@@ -1,10 +1,14 @@
 /**
- * Registers six model-facing Polymarket research tools over the public Gamma and CLOB
- * REST APIs: `search_market` (the primary, WebSearch-style entry point — enriched
- * search results in one call), `market_probability_gauge`, `market_price_chart`, a mock
- * `market_order_ticket` preview, `market_resolution_criteria`, and a mock
- * `market_position_summary`. Each tool's structured output rides `output.presentationMeta`
- * onto `tool/result.meta`, which is exactly what the `tool.call.toolview` widgets in
+ * Registers eight model-facing Polymarket research tools over the public Gamma, CLOB, and
+ * Data REST APIs: `search_market` (the primary, WebSearch-style entry point — enriched
+ * search results in one call), `market_group` (every sibling market under the same
+ * event), `market_price_chart`, `market_quote` (the live order book: bid/ask/spread/
+ * midpoint/depth), `market_trades` (recently executed fills), `market_resolution_criteria`,
+ * `market_sentiment` (public discussion comments), and `wallet_summary` (a real public
+ * wallet address's current positions and recent activity). Every tool returns only real
+ * data fetched live from Polymarket — none of them simulate, mock, or invent a value.
+ * Each tool's structured output rides `output.presentationMeta` onto `tool/result.meta`,
+ * which is exactly what the `tool.call.toolview` widgets in
  * `@deepseek-ai/dsh-client-ui-polymarket` read.
  *
  * This file (the cordis plugin) and `./tools/*.ts` (the `defineTool` wiring) are the
@@ -30,12 +34,14 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { marketOrderTicketTool } from './tools/market-order-ticket.ts'
-import { marketPositionSummaryTool } from './tools/market-position-summary.ts'
+import { marketGroupTool } from './tools/market-group.ts'
 import { marketPriceChartTool } from './tools/market-price-chart.ts'
-import { marketProbabilityGaugeTool } from './tools/market-probability-gauge.ts'
+import { marketQuoteTool } from './tools/market-quote.ts'
 import { marketResolutionCriteriaTool } from './tools/market-resolution-criteria.ts'
+import { marketSentimentTool } from './tools/market-sentiment.ts'
+import { marketTradesTool } from './tools/market-trades.ts'
 import { searchMarketTool } from './tools/search-market.ts'
+import { walletSummaryTool } from './tools/wallet-summary.ts'
 
 export const name = 'tool-polymarket'
 export const inject = ['tools']
@@ -77,9 +83,11 @@ export function apply(ctx: Context, config: Config): void {
   if (!config.enabled) return
 
   ctx.tools.register(searchMarketTool)
-  ctx.tools.register(marketProbabilityGaugeTool)
+  ctx.tools.register(marketGroupTool)
   ctx.tools.register(marketPriceChartTool)
-  ctx.tools.register(marketOrderTicketTool)
+  ctx.tools.register(marketQuoteTool)
+  ctx.tools.register(marketTradesTool)
   ctx.tools.register(marketResolutionCriteriaTool)
-  ctx.tools.register(marketPositionSummaryTool)
+  ctx.tools.register(marketSentimentTool)
+  ctx.tools.register(walletSummaryTool)
 }

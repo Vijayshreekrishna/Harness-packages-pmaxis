@@ -14,9 +14,11 @@
  * @module @deepseek-ai/dsh-tool-polymarket/core
  */
 
-export * from './market-order-ticket.ts'
-export * from './market-position-summary.ts'
+export * from './market-group.ts'
 export * from './market-price-chart.ts'
-export * from './market-probability-gauge.ts'
+export * from './market-quote.ts'
 export * from './market-resolution-criteria.ts'
+export * from './market-sentiment.ts'
+export * from './market-trades.ts'
 export * from './search-market.ts'
+export * from './wallet-summary.ts'
